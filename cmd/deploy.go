@@ -44,7 +44,7 @@ var deployCmd = &cobra.Command{
 		}
 
 		// Dockerイメージのビルド
-		if err := internal.BuildDockerImage(conf); err != nil {
+		if err := internal.BuildDockerImage(&conf); err != nil {
 			fmt.Printf("\nDockerイメージのビルドに失敗: %v\n", err)
 			return
 		}

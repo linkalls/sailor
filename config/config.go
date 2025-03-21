@@ -63,7 +63,6 @@ password = "your_password"  # パスワード認証を使う場合はこちら
 [docker]
 dockerfile = "Dockerfile"
 image_name = "myapp"
-tag = "latest"
 context = "./"
 
 [remote]
