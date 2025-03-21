@@ -25,10 +25,16 @@ sailor init
 `config/config.toml` を編集して、以下の項目を設定します：
 
 ```toml
+[docker]
+dockerfile = "Dockerfile"  # Dockerfileのパス
+context = "./"            # Dockerビルドコンテキストのパス
+image_name = "app"        # Dockerイメージ名
+tag = "latest"           # タグ名
+
 [deploy]
-trigger_branch = "main"  # デプロイを実行するブランチ
-image_name = "app"       # Dockerイメージ名
-container_name = "app"   # コンテナ名
+trigger_branch = "main"   # デプロイを実行するブランチ
+compressed_file = "deploy.tar.gz"  # 圧縮ファイル名
+remote_temp_dir = "/tmp"  # リモートの一時ディレクトリ
 
 [remote]
 host = "example.com"     # デプロイ先サーバーのホスト名

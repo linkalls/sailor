@@ -76,9 +76,14 @@ trigger_branch = "main"
 compressed_file = "deploy.tar.gz"
 remote_temp_dir = "/tmp"
 `
+    // configディレクトリを作成
+    if err := os.MkdirAll("config", 0755); err != nil {
+        return fmt.Errorf("configディレクトリの作成に失敗: %w", err)
+    }
+
     file, err := os.Create(path)
     if err != nil {
-        return err
+        return fmt.Errorf("設定ファイルの作成に失敗: %w", err)
     }
     defer file.Close()
 
@@ -161,4 +166,22 @@ func ShowDeployHistory() error {
 func execCommand(name string, args ...string) ([]byte, error) {
     cmd := exec.Command(name, args...)
     return cmd.Output()
+}
+
+// GenerateDefaultDockerfile はデフォルトのDockerfileを生成する関数
+func GenerateDefaultDockerfile(path string) error {
+    defaultDockerfile := `# 使用するベースイメージ
+FROM alpine:latest
+
+# コンテナ実行時に実行されるコマンド
+CMD echo "Hello, World!"
+`
+    file, err := os.Create(path)
+    if err != nil {
+        return fmt.Errorf("Dockerfileの作成に失敗: %w", err)
+    }
+    defer file.Close()
+
+    _, err = file.WriteString(defaultDockerfile)
+    return err
 }
