@@ -34,7 +34,7 @@ tag = "latest"           # タグ名
 [deploy]
 trigger_branch = "main"   # デプロイを実行するブランチ
 compressed_file = "deploy.tar.gz"  # 圧縮ファイル名
-remote_temp_dir = "/tmp"  # リモートの一時ディレクトリ
+remote_temp_dir = "~_temp/tmp"  # リモートの一時ディレクトリ
 
 [remote]
 host = "example.com"     # デプロイ先サーバーのホスト名

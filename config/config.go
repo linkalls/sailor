@@ -75,7 +75,7 @@ volumes = ["/data:/app/data"]
 [deploy]
 trigger_branch = "main"
 compressed_file = "deploy.tar.gz"
-remote_temp_dir = "/tmp/username/tmp"
+remote_temp_dir = "~/tmp"
 `
 	// configディレクトリを作成
 	if err := os.MkdirAll("config", 0755); err != nil {
