@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -93,11 +95,12 @@ remote_temp_dir = "~/tmp"
 
 // DeployHistoryEntry はデプロイ履歴のエントリ
 type DeployHistoryEntry struct {
-	Version      string    `toml:"version"`
-	CommitHash   string    `toml:"commit_hash"`
-	Image        string    `toml:"image"`
-	Timestamp    time.Time `toml:"timestamp"`
-	TimestampTag string    `toml:"timestamp_tag"` // タイムスタンプベースのタグを追加
+	Version       string    `toml:"version"`
+	CommitHash    string    `toml:"commit_hash"`
+	CommitMessage string    `toml:"commit_message"` // コミットメッセージを追加
+	Image         string    `toml:"image"`
+	Timestamp     time.Time `toml:"timestamp"`
+	TimestampTag  string    `toml:"timestamp_tag"` // タイムスタンプベースのタグを追加
 }
 
 // History はバージョン識別子をキーとしたデプロイ履歴のマップ
@@ -127,19 +130,27 @@ func RecordDeployHistory(conf Config) error {
 	now := time.Now()
 	version := fmt.Sprintf("%d", now.Unix())
 
-	// Git commit hash を取得（失敗したら unknown）
+	// Git commit hash とメッセージを取得
 	commitHashBytes, err := execCommand("git", "rev-parse", "--short", "HEAD")
 	commitHash := "unknown"
 	if err == nil {
 		commitHash = string(commitHashBytes)
 	}
 
+	// コミットメッセージを取得
+	commitMsgBytes, err := execCommand("git", "log", "-1", "--pretty=%B")
+	commitMsg := "unknown"
+	if err == nil {
+		commitMsg = string(commitMsgBytes)
+	}
+
 	entry := DeployHistoryEntry{
-		Version:      version,
-		CommitHash:   commitHash,
-		Image:        fmt.Sprintf("%s:%s", conf.Docker.ImageName, conf.Docker.Tag),
-		Timestamp:    now,
-		TimestampTag: conf.Docker.Tag, // タイムスタンプタグを保存
+		Version:       version,
+		CommitHash:    commitHash,
+		CommitMessage: commitMsg,
+		Image:         fmt.Sprintf("%s:%s", conf.Docker.ImageName, conf.Docker.Tag),
+		Timestamp:     now,
+		TimestampTag:  conf.Docker.Tag,
 	}
 	history[version] = entry
 
@@ -155,31 +166,76 @@ func RecordDeployHistory(conf Config) error {
 }
 
 // ShowDeployHistory は履歴を表示する関数
-func ShowDeployHistory() error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	historyPath := filepath.Join(wd, "config/history.toml")
-	history, err := LoadHistory(historyPath)
-	if err != nil {
-		return err
-	}
-	for version, entry := range history {
-		fmt.Printf("Version: %s, Commit: %s, Image: %s, Tag: %s, Time: %s\n",
-			version,
-			entry.CommitHash,
-			entry.Image,
-			entry.TimestampTag,
-			entry.Timestamp.Format(time.RFC3339))
-	}
-	return nil
+func ShowDeployHistory() ([]string, error) {
+wd, err := os.Getwd()
+if err != nil {
+return nil, err
+}
+historyPath := filepath.Join(wd, "config/history.toml")
+history, err := LoadHistory(historyPath)
+if err != nil {
+return nil, err
+}
+
+// バージョンのリストを作成
+versions := make([]string, 0, len(history))
+for version := range history {
+versions = append(versions, version)
+}
+
+// バージョンを時系列順にソート（新しい順）
+sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+
+fmt.Println("\n============= Deploy History =============\n")
+
+// 各バージョンの情報を表示
+for _, version := range versions {
+entry := history[version]
+fmt.Printf("[Version] %s\n", version)
+fmt.Println("┌─────────────┬──────────────────────────────────┐")
+fmt.Printf("│ Commit Hash │ %-30s │\n", entry.CommitHash)
+fmt.Printf("│ Message     │ %-30s │\n", truncateString(entry.CommitMessage, 30))
+fmt.Printf("│ Image       │ %-30s │\n", entry.Image)
+fmt.Printf("│ Time        │ %-30s │\n", entry.Timestamp.Format("2006-01-02 15:04:05 MST"))
+fmt.Println("└─────────────┴──────────────────────────────────┘")
+fmt.Println()
+}
+
+fmt.Println("=========================================")
+return versions, nil
+}
+
+// truncateString は文字列を指定した表示幅に切り詰める関数
+func truncateString(str string, width int) string {
+str = strings.TrimSpace(str)
+currentWidth := 0
+for i, r := range str {
+w := 1
+if r > 0x7F {
+w = 2 // 全角文字は幅2としてカウント
+}
+if currentWidth+w > width {
+if i > 0 {
+return str[:i] + "..."
+}
+return str[:1] + "..." // 最低1文字は表示
+}
+currentWidth += w
+}
+return str
 }
 
 // execCommand はコマンド実行して出力を返すヘルパー関数
 func execCommand(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	return cmd.Output()
+cmd := exec.Command(name, args...)
+// 日本語対応のための環境変数設定
+cmd.Env = append(os.Environ(), "LANG=ja_JP.UTF-8")
+out, err := cmd.Output()
+if err != nil {
+return out, err
+}
+// 改行を削除
+return []byte(strings.TrimSpace(string(out))), nil
 }
 
 // GenerateDefaultDockerfile はデフォルトのDockerfileを生成する関数
