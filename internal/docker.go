@@ -1,54 +1,62 @@
 package internal
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
+"fmt"
+"os"
+"os/exec"
+"time"
 
-	"github.com/linkalls/sailor/config"
+"github.com/linkalls/sailor/config"
+"golang.org/x/crypto/ssh"
 )
 
 // BuildDockerImage は Docker イメージをビルドする関数
 func BuildDockerImage(conf config.Config) error {
-	fmt.Println("Dockerイメージをビルド中...")
+    fmt.Println("Dockerイメージをビルド中...")
 
-	// docker build -t image_name:tag context
-	cmd := exec.Command("docker", "build", "-t", fmt.Sprintf("%s:%s", conf.Docker.ImageName, conf.Docker.Tag), "--no-cache", conf.Docker.Context)
+    // タイムスタンプベースのタグを生成
+    timestamp := time.Now().Format("20060102150405")
+    imageTag := fmt.Sprintf("%s:%s", conf.Docker.ImageName, timestamp)
 
-	// 標準出力とエラー出力を直接表示
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+    // タイムスタンプタグでビルド
+    buildCmd := exec.Command("docker", "build", "-t", imageTag, "--no-cache", conf.Docker.Context)
+    buildCmd.Stdout = os.Stdout
+    buildCmd.Stderr = os.Stderr
 
-	// コマンドの実行と完了待機
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ビルドに失敗: %w", err)
-	}
+    if err := buildCmd.Run(); err != nil {
+        return fmt.Errorf("ビルドに失敗: %w", err)
+    }
 
-	fmt.Println("Dockerイメージのビルドが完了しました")
-	return nil
+    fmt.Printf("Dockerイメージをビルドしました（%s）\n", imageTag)
+
+    // 設定にタイムスタンプタグを保存（後のロールバック用）
+    conf.Docker.Tag = timestamp
+
+    return nil
 }
 
 // SaveDockerImage は Docker イメージを tar.gz 形式で保存する関数
 func SaveDockerImage(conf config.Config) error {
-	fmt.Println("イメージを圧縮して保存中...")
+    fmt.Println("イメージを圧縮して保存中...")
 
-	// docker save -o compressed_file image_name:tag
-	cmd := exec.Command("docker", "save", "-o", conf.Deploy.CompressedFile, fmt.Sprintf("%s:%s", conf.Docker.ImageName, conf.Docker.Tag))
+    // タイムスタンプタグのイメージを保存
+    imageTag := fmt.Sprintf("%s:%s", conf.Docker.ImageName, conf.Docker.Tag)
+    cmd := exec.Command("docker", "save", "-o", conf.Deploy.CompressedFile, imageTag)
 
-	// 標準出力とエラー出力を直接表示
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+    // 標準出力とエラー出力を直接表示
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
 
-	// コマンドの実行と完了待機
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("圧縮に失敗: %w", err)
-	}
+    // コマンドの実行と完了待機
+    if err := cmd.Run(); err != nil {
+        return fmt.Errorf("圧縮に失敗: %w", err)
+    }
 
-	fmt.Printf("Dockerイメージを %s に保存しました\n", conf.Deploy.CompressedFile)
+    fmt.Printf("Dockerイメージ %s を %s に保存しました\n", imageTag, conf.Deploy.CompressedFile)
 
-	// 標準出力をフラッシュ
-	os.Stdout.Sync()
-	return nil
+    // 標準出力をフラッシュ
+    os.Stdout.Sync()
+    return nil
 }
 
 // min は2つの整数の小さい方を返す
@@ -78,22 +86,35 @@ func RunRemoteContainer(conf config.Config) error {
 	}
 	fmt.Println("イメージのロードが完了しました")
 
-	// 古いコンテナの停止
-	fmt.Println("2. 既存コンテナを停止中...")
-	stopCmd := fmt.Sprintf("docker stop %s", conf.Remote.ContainerName)
-	if err := ExecuteRemoteCommand(conf, stopCmd); err != nil {
-		fmt.Printf("注意: 古いコンテナの停止中にエラー: %v\n", err)
-	}
+// 既存コンテナの確認
+fmt.Println("2. 既存コンテナの確認中...")
+checkCmd := fmt.Sprintf("docker ps -a --filter name=%s --format {{.Names}}", conf.Remote.ContainerName)
+output, err := executeRemoteCommandWithOutput(conf, checkCmd)
+if err != nil {
+    return fmt.Errorf("コンテナの確認に失敗: %w", err)
+}
 
-	// 古いコンテナの削除
-	fmt.Println("3. 既存コンテナを削除中...")
-	rmCmd := fmt.Sprintf("docker rm %s || true", conf.Remote.ContainerName)
-	if err := ExecuteRemoteCommand(conf, rmCmd); err != nil {
-		fmt.Printf("注意: 古いコンテナの削除中にエラー: %v\n", err)
-	}
+// 既存コンテナが存在する場合のみ停止・削除を実行
+if output != "" {
+    // 古いコンテナの停止
+    fmt.Println("3. 既存コンテナを停止中...")
+    stopCmd := fmt.Sprintf("docker stop %s", conf.Remote.ContainerName)
+    if err := ExecuteRemoteCommand(conf, stopCmd); err != nil {
+        return fmt.Errorf("コンテナの停止に失敗: %w", err)
+    }
 
-	// 新しいコンテナの起動（-d でデーモンモード）
-	fmt.Println("4. 新しいコンテナを起動中...")
+    // 古いコンテナの削除
+    fmt.Println("4. 既存コンテナを削除中...")
+    rmCmd := fmt.Sprintf("docker rm %s", conf.Remote.ContainerName)
+    if err := ExecuteRemoteCommand(conf, rmCmd); err != nil {
+        return fmt.Errorf("コンテナの削除に失敗: %w", err)
+    }
+} else {
+    fmt.Printf("既存の %s コンテナは存在しないためスキップします\n", conf.Remote.ContainerName)
+}
+
+// 新しいコンテナの起動（-d でデーモンモード）
+fmt.Println("5. 新しいコンテナを起動中...")
 	runCmd := fmt.Sprintf("docker run -d --name %s %s %s %s %s",
 		conf.Remote.ContainerName,
 		formatPorts(conf.Remote.Ports),
@@ -107,6 +128,38 @@ func RunRemoteContainer(conf config.Config) error {
 	fmt.Println("新しいコンテナの起動が完了しました")
 
 	return nil
+}
+
+// executeRemoteCommandWithOutput は SSH を利用してリモートサーバー上でコマンドを実行し、その出力を返す関数
+func executeRemoteCommandWithOutput(conf config.Config, command string) (string, error) {
+    // SSH設定の取得
+    sshConfig, err := getSSHConfig(conf)
+    if err != nil {
+        return "", fmt.Errorf("SSH設定の取得に失敗: %w", err)
+    }
+
+    // SSHクライアントの作成
+    address := fmt.Sprintf("%s:%d", conf.SSH.Host, conf.SSH.Port)
+    client, err := ssh.Dial("tcp", address, sshConfig)
+    if err != nil {
+        return "", fmt.Errorf("SSH接続に失敗: %w", err)
+    }
+    defer client.Close()
+
+    // セッションの作成
+    session, err := client.NewSession()
+    if err != nil {
+        return "", fmt.Errorf("SSHセッションの作成に失敗: %w", err)
+    }
+    defer session.Close()
+
+    // コマンドの実行と出力の取得
+    output, err := session.CombinedOutput(command)
+    if err != nil {
+        return "", fmt.Errorf("コマンドの実行に失敗: %w", err)
+    }
+
+    return string(output), nil
 }
 
 // RollbackToVersion は指定されたバージョンの Docker イメージでロールバックする関数
